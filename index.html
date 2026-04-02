@@ -33,9 +33,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 #btn-confirm:disabled{background:#333 !important;color:#666 !important}
 
 /* PIECE PANEL */
-#piece-panel{background:#0d1117;padding:8px;flex-shrink:0;height:110px;border-top:2px solid #0f3460}
-#piece-list{display:flex;gap:6px;overflow-x:auto;height:100%;align-items:center;padding:0 4px 4px;scrollbar-width:thin;scrollbar-color:#0f3460 transparent}
-.piece-item{flex-shrink:0;cursor:grab;border:2px solid transparent;border-radius:6px;padding:3px;background:rgba(255,255,255,.04);transition:border-color .15s,background .15s;touch-action:none;user-select:none}
+#piece-panel{background:#0d1117;padding:4px;flex-shrink:0;height:148px;border-top:2px solid #0f3460}
+#piece-list{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;height:100%;overflow:hidden}
+.piece-item{display:flex;align-items:center;justify-content:center;cursor:grab;border:2px solid transparent;border-radius:4px;padding:1px;background:rgba(255,255,255,.04);transition:border-color .15s,background .15s;touch-action:none;user-select:none;overflow:hidden}
 .piece-item:active{opacity:.7}
 .piece-item.selected{border-color:#fff;background:rgba(255,255,255,.12)}
 .piece-item canvas{display:block}
@@ -430,6 +430,17 @@ function buildPiecePanel() {
     return PIECE_DEFS[a].cells.length - PIECE_DEFS[b].cells.length || a-b;
   });
 
+  // グリッドのアイテムサイズを幅・高さ両方から計算して統一セルサイズを決定
+  var panelEl = list.parentElement;
+  var panelW = panelEl.clientWidth || window.innerWidth;
+  var panelH = panelEl.clientHeight || 148;
+  var cols = 7, rows = 3, gap = 2, pad = 4;
+  var itemByW = Math.floor((panelW - pad*2 - gap*(cols-1)) / cols);
+  var itemByH = Math.floor((panelH - pad*2 - gap*(rows-1)) / rows);
+  var itemSz = Math.min(itemByW, itemByH);
+  list.style.gridAutoRows = itemSz + 'px';
+  var pc = Math.max(5, Math.floor((itemSz - 6) / 5)); // 全ピース統一セルサイズ（border2+padding1 = 6px分除く）
+
   for (var ii = 0; ii < ids.length; ii++) {
     var pid = ids[ii];
     var cells = PIECE_DEFS[pid].cells;
@@ -439,17 +450,14 @@ function buildPiecePanel() {
       if (cells[ci][1] > maxC) maxC = cells[ci][1];
     }
     maxR++; maxC++;
-    var dim = Math.max(maxR, maxC, 3);
-    var pc = Math.floor(86/dim);
 
+    // 実際のバウンディングボックスサイズで描画（全ピース同じpcで統一）
     var cnv = document.createElement('canvas');
-    cnv.width = dim*pc; cnv.height = dim*pc;
+    cnv.width = maxC * pc; cnv.height = maxR * pc;
     var pctx = cnv.getContext('2d');
-    var offR = Math.floor((dim-maxR)/2);
-    var offC = Math.floor((dim-maxC)/2);
     pctx.fillStyle = PLAYERS[player].color;
     for (var ci2 = 0; ci2 < cells.length; ci2++) {
-      pctx.fillRect((cells[ci2][1]+offC)*pc+1, (cells[ci2][0]+offR)*pc+1, pc-2, pc-2);
+      pctx.fillRect(cells[ci2][1]*pc+1, cells[ci2][0]*pc+1, pc-2, pc-2);
     }
 
     (function(id){
