@@ -39,6 +39,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .piece-item:active{opacity:.7}
 .piece-item.selected{border-color:#fff;background:rgba(255,255,255,.12)}
 .piece-item canvas{display:block}
+#board.lp-waiting{animation:lp-pulse .5s ease-in-out infinite}
+@keyframes lp-pulse{0%,100%{opacity:1}50%{opacity:.82}}
 
 /* MODALS */
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;z-index:100}
@@ -630,27 +632,45 @@ function getCenterOffset() {
 }
 
 // ボードタッチ状態管理
-// mode: 'none' | 'grab'(既存プレビューをつかんだ) | 'reposition'(空き場所をタッチ)
-var BT = {mode:'none', grabOffR:0, grabOffC:0, moved:false};
+// mode: 'none' | 'grab' | 'waiting'(長押し待機) | 'indirect-drag'(長押し後ドラッグ) | 'reposition'
+var BT = {mode:'none', grabOffR:0, grabOffC:0, moved:false, startR:0, startC:0, timer:null};
+
+function btClearTimer() {
+  if (BT.timer) { clearTimeout(BT.timer); BT.timer = null; }
+  canvas.classList.remove('lp-waiting');
+}
 
 function btStart(clientX, clientY) {
   if (DRAG.active || UI.selectedPieceId === null) return;
+  btClearTimer();
   var pos = boardPos(clientX, clientY);
-  BT.moved = false;
-  var grab = getGrabOffset(pos.r, pos.c);
+  BT.moved = false; BT.startR = pos.r; BT.startC = pos.c;
+  var grab = (UI.previewR !== null) ? getGrabOffset(pos.r, pos.c) : null;
   if (grab) {
-    // 既存プレビューをつかむ（位置はそのまま）
+    // プレビューピース上 → 即座につかむ
     BT.mode = 'grab';
-    BT.grabOffR = grab.dr;
-    BT.grabOffC = grab.dc;
+    BT.grabOffR = grab.dr; BT.grabOffC = grab.dc;
+  } else if (UI.previewR !== null) {
+    // プレビューあり・ピース外 → 1秒長押し待機
+    BT.mode = 'waiting';
+    canvas.classList.add('lp-waiting');
+    BT.timer = setTimeout(function() {
+      BT.timer = null;
+      if (BT.mode !== 'waiting') return;
+      // 長押し確定 → indirect-drag（指との相対位置を維持してドラッグ）
+      BT.mode = 'indirect-drag';
+      BT.grabOffR = BT.startR - UI.previewR;
+      BT.grabOffC = BT.startC - UI.previewC;
+      canvas.classList.remove('lp-waiting');
+      if (navigator.vibrate) navigator.vibrate(40);
+      drawBoard();
+    }, 1000);
   } else {
-    // 空きをタッチ → ピース中心を指に合わせて配置
+    // プレビューなし → 即座に中心配置
     BT.mode = 'reposition';
     var cen = getCenterOffset();
-    BT.grabOffR = cen.dr;
-    BT.grabOffC = cen.dc;
-    UI.previewR = pos.r - cen.dr;
-    UI.previewC = pos.c - cen.dc;
+    BT.grabOffR = cen.dr; BT.grabOffC = cen.dc;
+    UI.previewR = pos.r - cen.dr; UI.previewC = pos.c - cen.dc;
     updatePreview();
   }
   drawBoard();
@@ -658,20 +678,29 @@ function btStart(clientX, clientY) {
 
 function btMove(clientX, clientY) {
   if (BT.mode === 'none' || UI.selectedPieceId === null) return;
-  BT.moved = true;
   var pos = boardPos(clientX, clientY);
+  if (BT.mode === 'waiting') {
+    // 長押し前に指が動いた → repositionモードへ（ピースを中央配置）
+    btClearTimer();
+    BT.mode = 'reposition';
+    var cen = getCenterOffset();
+    BT.grabOffR = cen.dr; BT.grabOffC = cen.dc;
+    UI.previewR = pos.r - cen.dr; UI.previewC = pos.c - cen.dc;
+    updatePreview(); drawBoard(); return;
+  }
+  BT.moved = true;
   UI.previewR = pos.r - BT.grabOffR;
   UI.previewC = pos.c - BT.grabOffC;
   updatePreview(); drawBoard();
 }
 
 function btEnd() {
+  btClearTimer();
   if (BT.mode === 'none') return;
   var mode = BT.mode, moved = BT.moved;
   BT.mode = 'none'; BT.moved = false;
-  // 「つかんで」「動かさず」離した → 確定
+  // grabモードでタップ（動かさず）→ 確定
   if (mode === 'grab' && !moved && UI.previewValid) doConfirm();
-  // ドラッグ後・再配置後は確定しない（「確定」ボタンまたは再タップで確定）
 }
 
 canvas.addEventListener('touchstart', function(e){
