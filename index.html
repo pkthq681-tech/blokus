@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>ブロクス</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+html,body{height:100%;overflow:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#1a1a2e;color:#fff;display:flex;flex-direction:column}
+#app{display:flex;flex-direction:column;height:100%}
+
+/* HEADER */
+#header{display:flex;align-items:center;padding:8px 12px;background:#16213e;gap:10px;flex-shrink:0;border-bottom:2px solid #0f3460;min-height:48px}
+#player-indicator{font-size:14px;font-weight:bold;flex:1;display:flex;align-items:center;gap:8px}
+#player-dot{width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,.5);flex-shrink:0;transition:background .3s}
+#scores{display:flex;gap:5px}
+.score-chip{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:11px;border:2px solid rgba(255,255,255,.3);transition:transform .2s}
+.score-chip.active{transform:scale(1.2);border-color:#fff}
+#btn-pass{background:#c0392b;color:#fff;border:none;border-radius:8px;padding:7px 13px;font-size:13px;font-weight:bold;cursor:pointer;flex-shrink:0}
+#btn-pass:active{opacity:.7}
+
+/* BOARD */
+#board-container{flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:6px;min-height:0}
+#board{touch-action:none;cursor:crosshair;display:block}
+
+/* CONTROLS */
+#controls{display:flex;gap:8px;padding:8px 12px;background:#16213e;justify-content:center;flex-shrink:0;border-top:1px solid #0f3460;border-bottom:1px solid #0f3460}
+#controls button{background:#0f3460;color:#fff;border:none;border-radius:10px;padding:10px 0;font-size:20px;cursor:pointer;flex:1;max-width:75px;transition:background .15s}
+#controls button:active{background:#1a5276}
+#btn-confirm{background:#1e8449 !important;font-size:14px !important;font-weight:bold;max-width:90px !important}
+#btn-confirm:disabled{background:#333 !important;color:#666 !important}
+
+/* PIECE PANEL */
+#piece-panel{background:#0d1117;padding:8px;flex-shrink:0;height:110px;border-top:2px solid #0f3460}
+#piece-list{display:flex;gap:6px;overflow-x:auto;height:100%;align-items:center;padding:0 4px 4px;scrollbar-width:thin;scrollbar-color:#0f3460 transparent}
+.piece-item{flex-shrink:0;cursor:grab;border:2px solid transparent;border-radius:6px;padding:3px;background:rgba(255,255,255,.04);transition:border-color .15s,background .15s;touch-action:none;user-select:none}
+.piece-item:active{opacity:.7}
+.piece-item.selected{border-color:#fff;background:rgba(255,255,255,.12)}
+.piece-item canvas{display:block}
+
+/* MODALS */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal-box{background:#16213e;border:2px solid #0f3460;border-radius:16px;padding:28px 24px;text-align:center;min-width:280px;max-width:340px;width:90%}
+.modal-box h2{font-size:22px;margin-bottom:20px}
+#final-scores{margin:0 0 20px}
+.result-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.1);font-size:15px}
+.result-row:last-child{border-bottom:none}
+.result-dot{width:18px;height:18px;border-radius:50%;flex-shrink:0}
+.result-rank{font-weight:bold;width:50px;text-align:left}
+.result-name{flex:1;text-align:left}
+.result-score{font-weight:bold}
+.modal-box button{background:#1e8449;color:#fff;border:none;border-radius:10px;padding:12px 32px;font-size:16px;font-weight:bold;cursor:pointer;margin-top:4px}
+.modal-box button:active{opacity:.8}
+#pass-msg{font-size:16px;margin-bottom:20px;line-height:1.6}
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="header">
+    <div id="player-indicator">
+      <span id="player-dot"></span>
+      <span id="player-name-label"></span>のターン
+    </div>
+    <div id="scores"></div>
+    <button id="btn-pass">パス</button>
+  </header>
+  <div id="board-container">
+    <canvas id="board"></canvas>
+  </div>
+  <div id="controls">
+    <button id="btn-rotate-l">↺</button>
+    <button id="btn-rotate-r">↻</button>
+    <button id="btn-flip">⟺</button>
+    <button id="btn-confirm" disabled>確定</button>
+  </div>
+  <div id="piece-panel">
+    <div id="piece-list"></div>
+  </div>
+</div>
+
+<!-- モーダルは最初から非表示 -->
+<div id="modal-gameover" class="modal" style="display:none">
+  <div class="modal-box">
+    <h2>ゲーム終了！</h2>
+    <div id="final-scores"></div>
+    <button id="btn-restart">もう一度</button>
+  </div>
+</div>
+<div id="modal-pass" class="modal" style="display:none">
+  <div class="modal-box">
+    <div id="pass-msg"></div>
+    <button id="btn-pass-ok">OK</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ==================== ピース定義（21種） ====================
+const PIECE_DEFS = [
+  {id:0,  cells:[[0,0]]},
+  {id:1,  cells:[[0,0],[0,1]]},
+  {id:2,  cells:[[0,0],[0,1],[0,2]]},
+  {id:3,  cells:[[0,0],[1,0],[1,1]]},
+  {id:4,  cells:[[0,0],[0,1],[0,2],[0,3]]},
+  {id:5,  cells:[[0,0],[0,1],[0,2],[1,1]]},
+  {id:6,  cells:[[0,0],[0,1],[1,0],[1,1]]},
+  {id:7,  cells:[[0,0],[1,0],[2,0],[2,1]]},
+  {id:8,  cells:[[0,1],[0,2],[1,0],[1,1]]},
+  {id:9,  cells:[[0,1],[0,2],[1,0],[1,1],[2,1]]},
+  {id:10, cells:[[0,0],[0,1],[0,2],[0,3],[0,4]]},
+  {id:11, cells:[[0,0],[1,0],[2,0],[3,0],[3,1]]},
+  {id:12, cells:[[0,0],[1,0],[1,1],[2,1],[3,1]]},
+  {id:13, cells:[[0,0],[0,1],[1,0],[1,1],[2,0]]},
+  {id:14, cells:[[0,0],[0,1],[0,2],[1,1],[2,1]]},
+  {id:15, cells:[[0,0],[0,2],[1,0],[1,1],[1,2]]},
+  {id:16, cells:[[0,0],[1,0],[2,0],[2,1],[2,2]]},
+  {id:17, cells:[[0,0],[1,0],[1,1],[2,1],[2,2]]},
+  {id:18, cells:[[0,1],[1,0],[1,1],[1,2],[2,1]]},
+  {id:19, cells:[[0,1],[1,0],[1,1],[2,1],[3,1]]},
+  {id:20, cells:[[0,0],[0,1],[1,1],[2,1],[2,2]]},
+];
+
+// ==================== 変換関数 ====================
+function normalize(cells) {
+  var minR = Infinity, minC = Infinity;
+  for (var i = 0; i < cells.length; i++) {
+    if (cells[i][0] < minR) minR = cells[i][0];
+    if (cells[i][1] < minC) minC = cells[i][1];
+  }
+  return cells.map(function(c){ return [c[0]-minR, c[1]-minC]; });
+}
+function rotateCW(cells) {
+  return normalize(cells.map(function(c){ return [c[1], -c[0]]; }));
+}
+function flipH(cells) {
+  return normalize(cells.map(function(c){ return [c[0], -c[1]]; }));
+}
+function cellsKey(cells) {
+  return normalize(cells.slice()).map(function(c){ return c[0]+','+c[1]; }).sort().join('|');
+}
+function getOrientations(cells) {
+  var seen = {}, result = [];
+  var cur = normalize(cells);
+  for (var f = 0; f < 2; f++) {
+    for (var r = 0; r < 4; r++) {
+      var key = cellsKey(cur);
+      if (!seen[key]) {
+        seen[key] = true;
+        result.push(cur.map(function(c){ return [c[0],c[1]]; }));
+      }
+      cur = rotateCW(cur);
+    }
+    cur = flipH(cur);
+  }
+  return result;
+}
+var PIECE_ORIENTATIONS = PIECE_DEFS.map(function(p){ return getOrientations(p.cells); });
+
+// ==================== 定数 ====================
+var BOARD_SIZE = 20;
+var PLAYERS = [
+  {id:0, name:'プレイヤー1', color:'#3498db', startR:0,  startC:0},
+  {id:1, name:'プレイヤー2', color:'#e74c3c', startR:0,  startC:19},
+  {id:2, name:'プレイヤー3', color:'#2ecc71', startR:19, startC:19},
+  {id:3, name:'プレイヤー4', color:'#f1c40f', startR:19, startC:0},
+];
+
+// ==================== ゲーム状態 ====================
+var G = {};
+function initGame() {
+  var board = [];
+  for (var i = 0; i < BOARD_SIZE; i++) {
+    var row = [];
+    for (var j = 0; j < BOARD_SIZE; j++) row.push(-1);
+    board.push(row);
+  }
+  var pieces = [];
+  for (var p = 0; p < 4; p++) {
+    var s = {};
+    for (var k = 0; k < PIECE_DEFS.length; k++) s[k] = true;
+    pieces.push(s);
+  }
+  G = {
+    board: board,
+    pieces: pieces,
+    current: 0,
+    passed: [false,false,false,false],
+    firstMove: [true,true,true,true],
+    lastPiece: [null,null,null,null],
+  };
+}
+
+function piecesSize(player) {
+  return Object.keys(G.pieces[player]).length;
+}
+function piecesIds(player) {
+  return Object.keys(G.pieces[player]).map(Number);
+}
+
+// ==================== 配置検証 ====================
+function inBounds(r, c) { return r>=0 && r<BOARD_SIZE && c>=0 && c<BOARD_SIZE; }
+
+function absolute(cells, row, col) {
+  return cells.map(function(c){ return [c[0]+row, c[1]+col]; });
+}
+
+function isValidPlacement(player, cells, row, col) {
+  var placed = absolute(cells, row, col);
+  var p = PLAYERS[player];
+  var i, r, c, nr, nc, dr, dc;
+
+  for (i = 0; i < placed.length; i++) {
+    r = placed[i][0]; c = placed[i][1];
+    if (!inBounds(r,c) || G.board[r][c] !== -1) return false;
+  }
+
+  if (G.firstMove[player]) {
+    for (i = 0; i < placed.length; i++) {
+      if (placed[i][0] === p.startR && placed[i][1] === p.startC) return true;
+    }
+    return false;
+  }
+
+  var EDGES = [[-1,0],[1,0],[0,-1],[0,1]];
+  var DIAGS = [[-1,-1],[-1,1],[1,-1],[1,1]];
+  var touchesCorner = false;
+
+  for (i = 0; i < placed.length; i++) {
+    r = placed[i][0]; c = placed[i][1];
+    for (var e = 0; e < EDGES.length; e++) {
+      nr = r+EDGES[e][0]; nc = c+EDGES[e][1];
+      if (inBounds(nr,nc) && G.board[nr][nc] === player) return false;
+    }
+    for (var d = 0; d < DIAGS.length; d++) {
+      nr = r+DIAGS[d][0]; nc = c+DIAGS[d][1];
+      if (inBounds(nr,nc) && G.board[nr][nc] === player) touchesCorner = true;
+    }
+  }
+  return touchesCorner;
+}
+
+function placePiece(player, pieceId, cells, row, col) {
+  var placed = absolute(cells, row, col);
+  for (var i = 0; i < placed.length; i++) {
+    G.board[placed[i][0]][placed[i][1]] = player;
+  }
+  delete G.pieces[player][pieceId];
+  G.firstMove[player] = false;
+  G.lastPiece[player] = pieceId;
+}
+
+function hasAnyMove(player) {
+  if (G.passed[player] || piecesSize(player) === 0) return false;
+  var ids = piecesIds(player);
+  for (var pi = 0; pi < ids.length; pi++) {
+    var pid = ids[pi];
+    var orients = PIECE_ORIENTATIONS[pid];
+    for (var oi = 0; oi < orients.length; oi++) {
+      for (var r = 0; r < BOARD_SIZE; r++) {
+        for (var c = 0; c < BOARD_SIZE; c++) {
+          if (isValidPlacement(player, orients[oi], r, c)) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function calcScore(player) {
+  var ids = piecesIds(player);
+  var remaining = 0;
+  for (var i = 0; i < ids.length; i++) remaining += PIECE_DEFS[ids[i]].cells.length;
+  var score = -remaining;
+  if (remaining === 0) {
+    score += 15;
+    if (G.lastPiece[player] === 0) score += 5;
+  }
+  return score;
+}
+
+// ==================== UI状態 ====================
+var UI = {selectedPieceId:null, orientIdx:0, previewR:null, previewC:null, previewValid:false};
+function resetUI() {
+  UI.selectedPieceId = null; UI.orientIdx = 0;
+  UI.previewR = null; UI.previewC = null; UI.previewValid = false;
+}
+
+// ==================== ドラッグ状態 ====================
+var DRAG = {active:false, moved:false, startX:0, startY:0, ghost:null, ghostCanvas:null, ghostCtx:null};
+var GHOST_CP = 24; // ゴーストのセルサイズ(px)
+
+function initDragGhost() {
+  var g = document.createElement('div');
+  g.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;display:none;border-radius:4px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.5))';
+  var cnv = document.createElement('canvas');
+  g.appendChild(cnv);
+  document.body.appendChild(g);
+  DRAG.ghost = g; DRAG.ghostCanvas = cnv; DRAG.ghostCtx = cnv.getContext('2d');
+}
+
+function showGhost(cx, cy) {
+  if (!DRAG.ghost || UI.selectedPieceId === null) return;
+  var orient = PIECE_ORIENTATIONS[UI.selectedPieceId][UI.orientIdx];
+  var mR = 0, mC = 0;
+  for (var i = 0; i < orient.length; i++) {
+    if (orient[i][0] > mR) mR = orient[i][0];
+    if (orient[i][1] > mC) mC = orient[i][1];
+  }
+  mR++; mC++;
+  var cp = GHOST_CP;
+  DRAG.ghostCanvas.width = mC*cp; DRAG.ghostCanvas.height = mR*cp;
+  var gc = DRAG.ghostCtx;
+  gc.clearRect(0, 0, mC*cp, mR*cp);
+  gc.fillStyle = PLAYERS[G.current].color + 'cc';
+  gc.strokeStyle = 'rgba(255,255,255,0.9)';
+  gc.lineWidth = 1.5;
+  for (var i = 0; i < orient.length; i++) {
+    var r = orient[i][0], c = orient[i][1];
+    gc.fillRect(c*cp+1, r*cp+1, cp-2, cp-2);
+    gc.strokeRect(c*cp+1.5, r*cp+1.5, cp-3, cp-3);
+  }
+  // 指の上・中央に表示
+  DRAG.ghost.style.left = (cx - mC*cp/2) + 'px';
+  DRAG.ghost.style.top  = (cy - mR*cp - 18) + 'px';
+  DRAG.ghost.style.display = 'block';
+}
+
+function hideGhost() { if (DRAG.ghost) DRAG.ghost.style.display = 'none'; }
+
+function updateBoardPreviewFromPointer(cx, cy) {
+  if (UI.selectedPieceId === null) return;
+  var rect = canvas.getBoundingClientRect();
+  if (cx < rect.left || cx > rect.right || cy < rect.top || cy > rect.bottom) {
+    UI.previewR = null; UI.previewC = null; UI.previewValid = false; updateConfirm(); return;
+  }
+  var bC = Math.floor((cx - rect.left) / cellSize);
+  var bR = Math.floor((cy - rect.top)  / cellSize);
+  var orient = PIECE_ORIENTATIONS[UI.selectedPieceId][UI.orientIdx];
+  var mR = 0, mC = 0;
+  for (var i = 0; i < orient.length; i++) {
+    if (orient[i][0] > mR) mR = orient[i][0];
+    if (orient[i][1] > mC) mC = orient[i][1];
+  }
+  UI.previewR = bR - Math.floor(mR/2);
+  UI.previewC = bC - Math.floor(mC/2);
+  updatePreview();
+}
+
+// ==================== Canvas ====================
+var canvas = document.getElementById('board');
+var ctx = canvas.getContext('2d');
+var cellSize = 17;
+
+function setupCanvas() {
+  var container = document.getElementById('board-container');
+  var w = container.clientWidth - 12;
+  var h = container.clientHeight - 12;
+  if (w <= 0 || h <= 0) { cellSize = 17; }
+  else { cellSize = Math.max(12, Math.floor(Math.min(w, h) / BOARD_SIZE)); }
+  var px = cellSize * BOARD_SIZE;
+  canvas.width = px; canvas.height = px;
+  canvas.style.width = px+'px'; canvas.style.height = px+'px';
+}
+
+function drawBoard() {
+  var s = cellSize, px = s * BOARD_SIZE;
+  ctx.fillStyle = '#d0d8e8';
+  ctx.fillRect(0, 0, px, px);
+
+  ctx.strokeStyle = '#b0b8c8';
+  ctx.lineWidth = 0.5;
+  for (var i = 0; i <= BOARD_SIZE; i++) {
+    ctx.beginPath(); ctx.moveTo(i*s,0); ctx.lineTo(i*s,px); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,i*s); ctx.lineTo(px,i*s); ctx.stroke();
+  }
+
+  for (var r = 0; r < BOARD_SIZE; r++) {
+    for (var c = 0; c < BOARD_SIZE; c++) {
+      var p = G.board[r][c];
+      if (p !== -1) {
+        ctx.fillStyle = PLAYERS[p].color;
+        ctx.fillRect(c*s+1, r*s+1, s-2, s-2);
+      }
+    }
+  }
+
+  // スタートコーナーマーカー
+  for (var pi = 0; pi < 4; pi++) {
+    if (G.firstMove[pi]) {
+      var pl = PLAYERS[pi];
+      ctx.fillStyle = pl.color+'44';
+      ctx.fillRect(pl.startC*s+1, pl.startR*s+1, s-2, s-2);
+      ctx.strokeStyle = pl.color;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(pl.startC*s+1, pl.startR*s+1, s-2, s-2);
+    }
+  }
+
+  // プレビュー
+  if (UI.selectedPieceId !== null && UI.previewR !== null) {
+    var orient = PIECE_ORIENTATIONS[UI.selectedPieceId][UI.orientIdx];
+    var placed = absolute(orient, UI.previewR, UI.previewC);
+    var pColor = PLAYERS[G.current].color;
+    for (var ci = 0; ci < placed.length; ci++) {
+      var pr = placed[ci][0], pc2 = placed[ci][1];
+      if (!inBounds(pr, pc2)) continue;
+      if (UI.previewValid) {
+        ctx.fillStyle = pColor+'bb';
+        ctx.fillRect(pc2*s+1, pr*s+1, s-2, s-2);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(pc2*s+1.5, pr*s+1.5, s-3, s-3);
+      } else {
+        ctx.fillStyle = 'rgba(255,60,60,.55)';
+        ctx.fillRect(pc2*s+1, pr*s+1, s-2, s-2);
+      }
+    }
+  }
+}
+
+// ==================== ピースパネル ====================
+function buildPiecePanel() {
+  var list = document.getElementById('piece-list');
+  list.innerHTML = '';
+  var player = G.current;
+  var ids = piecesIds(player).sort(function(a,b){
+    return PIECE_DEFS[a].cells.length - PIECE_DEFS[b].cells.length || a-b;
+  });
+
+  for (var ii = 0; ii < ids.length; ii++) {
+    var pid = ids[ii];
+    var cells = PIECE_DEFS[pid].cells;
+    var maxR = 0, maxC = 0;
+    for (var ci = 0; ci < cells.length; ci++) {
+      if (cells[ci][0] > maxR) maxR = cells[ci][0];
+      if (cells[ci][1] > maxC) maxC = cells[ci][1];
+    }
+    maxR++; maxC++;
+    var dim = Math.max(maxR, maxC, 3);
+    var pc = Math.floor(86/dim);
+
+    var cnv = document.createElement('canvas');
+    cnv.width = dim*pc; cnv.height = dim*pc;
+    var pctx = cnv.getContext('2d');
+    var offR = Math.floor((dim-maxR)/2);
+    var offC = Math.floor((dim-maxC)/2);
+    pctx.fillStyle = PLAYERS[player].color;
+    for (var ci2 = 0; ci2 < cells.length; ci2++) {
+      pctx.fillRect((cells[ci2][1]+offC)*pc+1, (cells[ci2][0]+offR)*pc+1, pc-2, pc-2);
+    }
+
+    (function(id){
+      var item = document.createElement('div');
+      item.className = 'piece-item' + (id === UI.selectedPieceId ? ' selected' : '');
+      item.appendChild(cnv);
+
+      function startDrag(cx, cy) {
+        selectPiece(id, true); // パネル再描画を遅らせる
+        DRAG.active = true; DRAG.moved = false;
+        DRAG.startX = cx; DRAG.startY = cy;
+        showGhost(cx, cy);
+        updateBoardPreviewFromPointer(cx, cy);
+        drawBoard();
+      }
+      item.addEventListener('touchstart', function(e){
+        e.preventDefault();
+        startDrag(e.touches[0].clientX, e.touches[0].clientY);
+      }, {passive:false});
+      item.addEventListener('mousedown', function(e){
+        e.preventDefault();
+        startDrag(e.clientX, e.clientY);
+      });
+
+      list.appendChild(item);
+    })(pid);
+  }
+}
+
+// ==================== ヘッダー ====================
+function updateHeader() {
+  var p = PLAYERS[G.current];
+  document.getElementById('player-dot').style.background = p.color;
+  document.getElementById('player-name-label').textContent = p.name;
+
+  var html = '';
+  for (var i = 0; i < 4; i++) {
+    var pl = PLAYERS[i];
+    var ids = piecesIds(i);
+    var rem = 0;
+    for (var j = 0; j < ids.length; j++) rem += PIECE_DEFS[ids[j]].cells.length;
+    var textColor = i===3 ? '#333' : '#fff';
+    html += '<div class="score-chip'+(i===G.current?' active':'')+'" style="background:'+pl.color+';color:'+textColor+'" title="'+pl.name+': 残り'+rem+'マス">'+rem+'</div>';
+  }
+  document.getElementById('scores').innerHTML = html;
+}
+
+// ==================== 操作 ====================
+function selectPiece(pid, skipPanel) {
+  UI.selectedPieceId = pid; UI.orientIdx = 0;
+  UI.previewR = null; UI.previewC = null; UI.previewValid = false;
+  updateConfirm(); drawBoard();
+  if (!skipPanel) buildPiecePanel();
+}
+
+function updatePreview() {
+  if (UI.selectedPieceId === null || UI.previewR === null) {
+    UI.previewValid = false;
+  } else {
+    UI.previewValid = isValidPlacement(G.current, PIECE_ORIENTATIONS[UI.selectedPieceId][UI.orientIdx], UI.previewR, UI.previewC);
+  }
+  updateConfirm();
+}
+
+function updateConfirm() {
+  document.getElementById('btn-confirm').disabled = !UI.previewValid;
+}
+
+function doRotate(dir) {
+  if (UI.selectedPieceId === null) return;
+  var n = PIECE_ORIENTATIONS[UI.selectedPieceId].length;
+  UI.orientIdx = ((UI.orientIdx + dir) % n + n) % n;
+  updatePreview(); drawBoard();
+}
+
+function doFlip() {
+  if (UI.selectedPieceId === null) return;
+  var n = PIECE_ORIENTATIONS[UI.selectedPieceId].length;
+  UI.orientIdx = (UI.orientIdx + Math.max(1, Math.floor(n/2))) % n;
+  updatePreview(); drawBoard();
+}
+
+function doConfirm() {
+  if (!UI.previewValid || UI.selectedPieceId === null) return;
+  var orient = PIECE_ORIENTATIONS[UI.selectedPieceId][UI.orientIdx];
+  placePiece(G.current, UI.selectedPieceId, orient, UI.previewR, UI.previewC);
+  resetUI(); nextTurn();
+}
+
+// ==================== ターン管理 ====================
+function nextTurn() {
+  for (var i = 0; i < 4; i++) {
+    if (!G.passed[i] && !hasAnyMove(i)) G.passed[i] = true;
+  }
+  var allPassed = G.passed[0] && G.passed[1] && G.passed[2] && G.passed[3];
+  if (allPassed) { showGameOver(); return; }
+
+  var next = (G.current + 1) % 4;
+  var tries = 0;
+  while (G.passed[next] && tries < 4) { next = (next+1)%4; tries++; }
+  G.current = next;
+
+  updateConfirm(); updateHeader(); buildPiecePanel(); drawBoard();
+}
+
+function doPass() {
+  var pname = PLAYERS[G.current].name;
+  G.passed[G.current] = true;
+  document.getElementById('pass-msg').innerHTML = '<strong>'+pname+'</strong><br>パスします';
+  document.getElementById('modal-pass').style.display = 'flex';
+}
+
+document.getElementById('btn-pass-ok').addEventListener('click', function(){
+  document.getElementById('modal-pass').style.display = 'none';
+  resetUI(); nextTurn();
+});
+
+// ==================== ゲーム終了 ====================
+function showGameOver() {
+  var scores = [];
+  for (var i = 0; i < 4; i++) scores.push({pl:PLAYERS[i], score:calcScore(i), idx:i});
+  scores.sort(function(a,b){ return b.score - a.score; });
+
+  var html = '';
+  var medals = ['🏆1位','2位','3位','4位'];
+  for (var i = 0; i < scores.length; i++) {
+    var s = scores[i];
+    var tc = s.idx===3 ? '#333' : 'white';
+    html += '<div class="result-row"><div class="result-dot" style="background:'+s.pl.color+'"></div><span class="result-rank">'+medals[i]+'</span><span class="result-name">'+s.pl.name+'</span><span class="result-score">'+s.score+'点</span></div>';
+  }
+  document.getElementById('final-scores').innerHTML = html;
+  document.getElementById('modal-gameover').style.display = 'flex';
+}
+
+document.getElementById('btn-restart').addEventListener('click', function(){
+  document.getElementById('modal-gameover').style.display = 'none';
+  initGame(); resetUI(); updateHeader(); buildPiecePanel(); updateConfirm();
+  requestAnimationFrame(function(){ setupCanvas(); drawBoard(); });
+});
+
+// ==================== タッチ/クリック ====================
+function boardPos(clientX, clientY) {
+  var rect = canvas.getBoundingClientRect();
+  return {r: Math.floor((clientY-rect.top)/cellSize), c: Math.floor((clientX-rect.left)/cellSize)};
+}
+
+// タッチ位置がプレビューピース上かチェックし、オフセットを返す
+function getGrabOffset(touchR, touchC) {
+  if (UI.selectedPieceId === null || UI.previewR === null) return null;
+  var orient = PIECE_ORIENTATIONS[UI.selectedPieceId][UI.orientIdx];
+  var placed = absolute(orient, UI.previewR, UI.previewC);
+  for (var i = 0; i < placed.length; i++) {
+    if (placed[i][0] === touchR && placed[i][1] === touchC) {
+      return {dr: touchR - UI.previewR, dc: touchC - UI.previewC};
+    }
+  }
+  return null;
+}
+
+// ピースの中心オフセットを返す
+function getCenterOffset() {
+  if (UI.selectedPieceId === null) return {dr:0, dc:0};
+  var orient = PIECE_ORIENTATIONS[UI.selectedPieceId][UI.orientIdx];
+  var mR = 0, mC = 0;
+  for (var i = 0; i < orient.length; i++) {
+    if (orient[i][0] > mR) mR = orient[i][0];
+    if (orient[i][1] > mC) mC = orient[i][1];
+  }
+  return {dr: Math.floor(mR/2), dc: Math.floor(mC/2)};
+}
+
+// ボードタッチ状態管理
+// mode: 'none' | 'grab'(既存プレビューをつかんだ) | 'reposition'(空き場所をタッチ)
+var BT = {mode:'none', grabOffR:0, grabOffC:0, moved:false};
+
+function btStart(clientX, clientY) {
+  if (DRAG.active || UI.selectedPieceId === null) return;
+  var pos = boardPos(clientX, clientY);
+  BT.moved = false;
+  var grab = getGrabOffset(pos.r, pos.c);
+  if (grab) {
+    // 既存プレビューをつかむ（位置はそのまま）
+    BT.mode = 'grab';
+    BT.grabOffR = grab.dr;
+    BT.grabOffC = grab.dc;
+  } else {
+    // 空きをタッチ → ピース中心を指に合わせて配置
+    BT.mode = 'reposition';
+    var cen = getCenterOffset();
+    BT.grabOffR = cen.dr;
+    BT.grabOffC = cen.dc;
+    UI.previewR = pos.r - cen.dr;
+    UI.previewC = pos.c - cen.dc;
+    updatePreview();
+  }
+  drawBoard();
+}
+
+function btMove(clientX, clientY) {
+  if (BT.mode === 'none' || UI.selectedPieceId === null) return;
+  BT.moved = true;
+  var pos = boardPos(clientX, clientY);
+  UI.previewR = pos.r - BT.grabOffR;
+  UI.previewC = pos.c - BT.grabOffC;
+  updatePreview(); drawBoard();
+}
+
+function btEnd() {
+  if (BT.mode === 'none') return;
+  var mode = BT.mode, moved = BT.moved;
+  BT.mode = 'none'; BT.moved = false;
+  // 「つかんで」「動かさず」離した → 確定
+  if (mode === 'grab' && !moved && UI.previewValid) doConfirm();
+  // ドラッグ後・再配置後は確定しない（「確定」ボタンまたは再タップで確定）
+}
+
+canvas.addEventListener('touchstart', function(e){
+  e.preventDefault(); btStart(e.touches[0].clientX, e.touches[0].clientY);
+}, {passive:false});
+canvas.addEventListener('touchmove',  function(e){
+  e.preventDefault(); btMove(e.touches[0].clientX, e.touches[0].clientY);
+}, {passive:false});
+canvas.addEventListener('touchend',   function(e){ e.preventDefault(); btEnd(); }, {passive:false});
+
+canvas.addEventListener('mousedown', function(e){
+  if (e.button !== 0) return;
+  btStart(e.clientX, e.clientY);
+});
+
+// ==================== パネルドラッグ（グローバル） ====================
+function onDragEnd(moved, cx, cy) {
+  DRAG.active = false;
+  hideGhost();
+  if (moved) {
+    if (UI.previewValid) {
+      doConfirm();
+    } else {
+      UI.previewR = null; UI.previewC = null; UI.previewValid = false;
+      updateConfirm(); drawBoard(); buildPiecePanel();
+    }
+  } else {
+    buildPiecePanel(); // タップ：パネル再描画で選択ハイライト
+  }
+}
+
+document.addEventListener('touchmove', function(e){
+  if (!DRAG.active) return;
+  var t = e.touches[0];
+  var dx = t.clientX - DRAG.startX, dy = t.clientY - DRAG.startY;
+  if (!DRAG.moved && Math.sqrt(dx*dx+dy*dy) > 8) DRAG.moved = true;
+  if (DRAG.moved) {
+    showGhost(t.clientX, t.clientY);
+    updateBoardPreviewFromPointer(t.clientX, t.clientY);
+    drawBoard();
+  }
+}, {passive:true});
+
+document.addEventListener('touchend', function(e){
+  if (!DRAG.active) return;
+  onDragEnd(DRAG.moved);
+});
+
+document.addEventListener('touchcancel', function(e){
+  if (!DRAG.active) return;
+  DRAG.active = false; hideGhost();
+  UI.previewR = null; UI.previewC = null; UI.previewValid = false;
+  updateConfirm(); drawBoard(); buildPiecePanel();
+});
+
+document.addEventListener('mousemove', function(e){
+  if (DRAG.active) {
+    // パネルドラッグ
+    var dx = e.clientX - DRAG.startX, dy = e.clientY - DRAG.startY;
+    if (!DRAG.moved && Math.sqrt(dx*dx+dy*dy) > 8) DRAG.moved = true;
+    if (DRAG.moved) {
+      showGhost(e.clientX, e.clientY);
+      updateBoardPreviewFromPointer(e.clientX, e.clientY);
+      drawBoard();
+    }
+  } else if (BT.mode !== 'none') {
+    // ボードマウスドラッグ
+    btMove(e.clientX, e.clientY);
+  }
+});
+
+document.addEventListener('mouseup', function(e){
+  if (DRAG.active) {
+    onDragEnd(DRAG.moved);
+  } else if (BT.mode !== 'none') {
+    btEnd();
+  }
+});
+
+// ==================== ボタン ====================
+document.getElementById('btn-rotate-l').addEventListener('click', function(){ doRotate(-1); });
+document.getElementById('btn-rotate-r').addEventListener('click', function(){ doRotate(1); });
+document.getElementById('btn-flip').addEventListener('click', doFlip);
+document.getElementById('btn-confirm').addEventListener('click', doConfirm);
+document.getElementById('btn-pass').addEventListener('click', doPass);
+window.addEventListener('resize', function(){ setupCanvas(); drawBoard(); });
+
+// ==================== 起動 ====================
+initGame();
+initDragGhost();
+updateHeader();
+buildPiecePanel();
+updateConfirm();
+requestAnimationFrame(function(){
+  setupCanvas();
+  drawBoard();
+});
+</script>
+</body>
+</html>
